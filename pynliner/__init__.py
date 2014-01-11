@@ -233,7 +233,8 @@ class Pynliner(object):
         style_tags = self.soup.findAll('style')
         for tag in style_tags:
             self.style_string += u'\n'.join(tag.contents) + u'\n'
-            tag.extract()
+            if tag.get('leave', 'false') != 'true':
+                tag.extract()
 
     def _insert_media_rules(self):
         """If there are any media rules, re-insert a style tag at the top and
