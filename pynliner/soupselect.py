@@ -100,7 +100,7 @@ def select(soup, selector):
             handle_token = False
             match = re.search('([_0-9a-zA-Z-#.:*"\'\[\\]=]+)$', selector)
             if not match:
-                raise Exception("No match was found. We're done or something is broken")
+                raise Exception("No match was found for {}. We're done or something is broken".format(selector))
             token = match.groups(1)[0]
 
             # remove this token from the selector
