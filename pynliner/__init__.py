@@ -236,6 +236,15 @@ class Pynliner(object):
             if tag.get('leave', 'false') != 'true':
                 tag.extract()
 
+    def _get_specificity_from_list(self, lst):
+        """
+        Takes an array of ints and returns an integer formed
+        by adding all ints multiplied by the power of 10 of the current index
+
+        (1, 0, 0, 1) => (1 * 10**3) + (0 * 10**2) + (0 * 10**1) + (1 * 10**0) => 1001
+        """
+        return int(''.join(map(str, lst)))
+
     def _insert_media_rules(self):
         """If there are any media rules, re-insert a style tag at the top and
         dump them all in.
