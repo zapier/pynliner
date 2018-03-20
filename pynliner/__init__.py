@@ -5,7 +5,7 @@
 Python CSS-to-inline-styles conversion tool for HTML using BeautifulSoup and
 cssutils
 
-Copyright (c) 2011-2013 Tanner Netterville
+Copyright (c) 2011-2016 Tanner Netterville
 
 Permission is hereby granted, free of charge, to any person obtaining a copy of
 this software and associated documentation files (the "Software"), to deal in
@@ -30,14 +30,29 @@ THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 """
 
-__version__ = "0.5.0"
-
 import re
-import urlparse
-import urllib2
+
 import cssutils
-from BeautifulSoup import BeautifulSoup, Comment
-from soupselect import select
+from bs4 import BeautifulSoup
+
+from .soupselect import select
+
+try:
+    from urllib.parse import urljoin
+    from urllib.request import urlopen
+    unicode = str
+except ImportError:
+    from urlparse import urljoin
+    from urllib2 import urlopen
+
+__version__ = "0.8.0"
+
+
+# this pattern may be too aggressive
+HTML_ENTITY_PATTERN = re.compile(r'&(#([0-9]+|x[a-fA-F0-9]+)|[a-zA-Z][^\s;]+);')
+
+SUBSTITUTION_FORMAT = '[pynlinerSubstitute:{0}]'
+SUBSTITUTION_PATTERN = re.compile(r'\[pynlinerSubstitute:(\d+)\]')
 
 
 class Pynliner(object):
@@ -48,13 +63,16 @@ class Pynliner(object):
     stylesheet = False
     output = False
 
-    def __init__(self, log=None, allow_conditional_comments=False):
+    def __init__(self, log=None, allow_conditional_comments=False,
+                 preserve_entities=True):
         self.log = log
         cssutils.log.enabled = False if log is None else True
         self.extra_style_strings = []
         self.allow_conditional_comments = allow_conditional_comments
+        self.preserve_entities = preserve_entities
         self.root_url = None
         self.relative_url = None
+        self._substitutions = None
 
     def from_url(self, url):
         """Gets remote HTML page for conversion
@@ -111,19 +129,52 @@ class Pynliner(object):
         >>> Pynliner().from_string(html).run()
         u'<h1 style="color: #fc0">Hello World!</h1>'
         """
+        self._substitutions = []
+        if self.preserve_entities:
+            self._substitute_entities()
         if not self.soup:
             self._get_soup()
         if not self.stylesheet:
             self._get_styles()
         self._apply_styles()
+        self._insert_media_rules()
         self._get_output()
-        self._clean_output()
+        self._unsubstitute_output()
         return self.output
+
+    def _store_substitute(self, value):
+        """
+        store a string and return it's substitute
+        """
+        index = len(self._substitutions)
+        self._substitutions.append(value)
+        return SUBSTITUTION_FORMAT.format(index)
 
     def _get_url(self, url):
         """Returns the response content from the given url
         """
-        return urllib2.urlopen(url).read()
+        return urlopen(url).read().decode()
+
+    def _substitute_entities(self):
+        """
+        Add HTML entities to the substitutions list and replace with
+        placeholders in HTML source
+        """
+        self.source_string = re.sub(
+            HTML_ENTITY_PATTERN,
+            lambda m: self._store_substitute(m.group(0)),
+            self.source_string
+        )
+
+    def _unsubstitute_output(self):
+        """
+        Put substitutions back into the output
+        """
+        self.output = re.sub(
+            SUBSTITUTION_PATTERN,
+            lambda m: self._substitutions[int(m.group(1))],
+            self.output
+        )
 
     def _get_soup(self):
         """Convert source string to BeautifulSoup object. Sets it to self.soup.
@@ -136,8 +187,8 @@ class Pynliner(object):
         try:
             from mod_wsgi import version
             self.soup = BeautifulSoup(self.source_string, "html5lib")
-        except:
-            self.soup = BeautifulSoup(self.source_string)
+        except ImportError:
+            self.soup = BeautifulSoup(self.source_string, "html.parser")
 
     def _get_styles(self):
         """Gets all CSS content from and removes all <link rel="stylesheet"> and
@@ -166,7 +217,7 @@ class Pynliner(object):
 
             # Convert the relative URL to an absolute URL ready to pass to urllib
             base_url = self.relative_url or self.root_url
-            url = urlparse.urljoin(base_url, url)
+            url = urljoin(base_url, url)
 
             self.style_string += self._get_url(url)
             tag.extract()
@@ -194,11 +245,19 @@ class Pynliner(object):
         """
         return int(''.join(map(str, lst)))
 
-    def _get_rule_specificity(self, rule):
+    def _insert_media_rules(self):
+        """If there are any media rules, re-insert a style tag at the top and
+        dump them all in.
         """
-        For a given CSSRule get its selector specificity in base 10
-        """
-        return sum(map(self._get_specificity_from_list, (s.specificity for s in rule.selectorList)))
+        rules = list(self.stylesheet.cssRules.rulesOfType(cssutils.css.CSSRule.MEDIA_RULE))
+        if rules:
+            style = BeautifulSoup(
+                "<style>" + "\n".join(re.sub(r'\s+', ' ', x.cssText) for x in rules) +
+                "</style>",
+                "html.parser"
+            )
+            target = self.soup.body or self.soup
+            target.insert(0, style)
 
     def _apply_styles(self):
         """Steps through CSS rules and applies each to all the proper elements
@@ -207,43 +266,39 @@ class Pynliner(object):
         rules = self.stylesheet.cssRules.rulesOfType(1)
         elem_prop_map = {}
         elem_style_map = {}
-
         # build up a property list for every styled element
         for rule in rules:
-            # select elements for every selector
-            selectors = rule.selectorText.split(',')
-            elements = []
-            for selector in selectors:
-                elements += select(self.soup, selector)
-            # build prop_list for each selected element
-            for elem in elements:
-                if elem not in elem_prop_map:
-                    elem_prop_map[elem] = []
-                elem_prop_map[elem].append({
-                    'specificity': self._get_rule_specificity(rule),
-                    'props': rule.style.getProperties(),
-                })
+            for selector in rule.selectorList:
+                for element in select(self.soup, selector.selectorText):
+                    element_tuple = (element, id(element))
+                    if element_tuple not in elem_prop_map:
+                        elem_prop_map[element_tuple] = []
+                    elem_prop_map[element_tuple].append({
+                        'specificity': selector.specificity,
+                        'props': rule.style.getProperties(),
+                    })
 
         # build up another property list using selector specificity
-        for elem, props in elem_prop_map.items():
-            if elem not in elem_style_map:
-                elem_style_map[elem] = cssutils.css.CSSStyleDeclaration()
+        for elem_tuple, props in elem_prop_map.items():
+            elem, elem_id = elem_tuple
+            if elem_tuple not in elem_style_map:
+                elem_style_map[elem_tuple] = cssutils.css.CSSStyleDeclaration()
             # ascending sort of prop_lists based on specificity
             props = sorted(props, key=lambda p: p['specificity'])
             # for each prop_list, apply to CSSStyleDeclaration
             for prop_list in map(lambda obj: obj['props'], props):
                 for prop in prop_list:
-                    elem_style_map[elem].removeProperty(prop.name)
-                    elem_style_map[elem].setProperty(prop.name, prop.value)
-
+                    elem_style_map[elem_tuple].removeProperty(prop.name)
+                    elem_style_map[elem_tuple].setProperty(prop.name, prop.value)
 
         # apply rules to elements
-        for elem, style_declaration in elem_style_map.items():
-            if elem.has_key('style'):
+        for elem_tuple, style_declaration in elem_style_map.items():
+            elem, elem_id = elem_tuple
+            if elem.has_attr('style'):
                 elem['style'] = u'%s; %s' % (style_declaration.cssText.replace('\n', ' '), elem['style'])
             else:
                 elem['style'] = style_declaration.cssText.replace('\n', ' ')
-        
+
     def _get_output(self):
         """Generate Unicode string of `self.soup` and set it to `self.output`
 
@@ -251,34 +306,23 @@ class Pynliner(object):
         """
         self.output = unicode(self.soup)
         return self.output
-    
-    def _clean_output(self):
-        """Clean up after BeautifulSoup's output.
-        """
-        if self.allow_conditional_comments:
-            matches = re.finditer('(<!--\[if .+\].+?&lt;!\[endif\]-->)', self.output)
-            for match in matches:
-                comment = match.group()
-                comment = comment.replace('&gt;', '>')
-                comment = comment.replace('&lt;', '<')
-                self.output = (self.output[:match.start()] + comment +
-                               self.output[match.end():])
 
 
-def fromURL(url, log=None):
+def fromURL(url, **kwargs):
     """Shortcut Pynliner constructor. Equivalent to:
 
     >>> Pynliner().from_url(someURL).run()
 
     Returns processed HTML string.
     """
-    return Pynliner(log).from_url(url).run()
+    return Pynliner(**kwargs).from_url(url).run()
 
-def fromString(string, log=None):
+
+def fromString(string, **kwargs):
     """Shortcut Pynliner constructor. Equivalent to:
 
     >>> Pynliner().from_string(someString).run()
 
     Returns processed HTML string.
     """
-    return Pynliner(log).from_string(string).run()
+    return Pynliner(**kwargs).from_string(string).run()

@@ -15,13 +15,15 @@ select(soup, 'div#main ul a')
 patched to support multiple class selectors here http://code.google.com/p/soupselect/issues/detail?id=4#c0
 """
 import re
-import BeautifulSoup
+import operator as operator_
+from functools import partial
 
-attribute_regex = re.compile('\[(?P<attribute>\w+)(?P<operator>[=~\|\^\$\*]?)=?["\']?(?P<value>[^\]"]*)["\']?\]')
-pseudo_classes_regexes = (
-    re.compile(':(first-child)'),
-    re.compile(':(last-child)')
-)
+import bs4
+
+ATTRIBUTE_PATTERN = re.compile(r'\[(?P<attribute>[^\s\]=~\|\^\$\*]+)(?P<operator>[=~\|\^\$\*]?)=?["\']?(?P<value>[^\]"]*)["\']?\]')
+PSEUDO_CLASS_PATTERN = re.compile(u':(([^:.#(*\\[]|\\([^)]+\\))+)')
+SELECTOR_TOKEN_PATTERN = re.compile(r'([_0-9a-zA-Z-#.:*]+|\[[^\]]+\])$')
+
 
 def get_attribute_checker(operator, attribute, value=''):
     """
@@ -41,14 +43,16 @@ def get_attribute_checker(operator, attribute, value=''):
         # attribute is either exactly value or starts with value-
         '|': lambda el: el.get(attribute, '') == value \
             or el.get(attribute, '').startswith('%s-' % value),
-    }.get(operator, lambda el: el.has_key(attribute))
+    }.get(operator, lambda el: el.has_attr(attribute))
+
 
 def is_white_space(el):
-    if isinstance(el, BeautifulSoup.NavigableString) and str(el).strip() == '':
+    if isinstance(el, bs4.NavigableString) and str(el).strip() == '':
         return True
-    if isinstance(el, BeautifulSoup.Comment):
+    if isinstance(el, bs4.Comment):
         return True
     return False
+
 
 def is_last_content_node(el):
     result = False
@@ -58,6 +62,7 @@ def is_last_content_node(el):
         result = is_last_content_node(el.nextSibling)
     return result
 
+
 def is_first_content_node(el):
     result = False
     if el is None:
@@ -65,7 +70,8 @@ def is_first_content_node(el):
     if is_white_space(el):
         result = is_first_content_node(el.previousSibling)
     return result
-        
+
+
 def get_pseudo_class_checker(psuedo_class):
     """
     Takes a psuedo_class, like "first-child" or "last-child"
@@ -75,7 +81,16 @@ def get_pseudo_class_checker(psuedo_class):
     return {
         'first-child': lambda el: is_first_content_node(getattr(el, 'previousSibling', None)),
         'last-child': lambda el: is_last_content_node(getattr(el, 'nextSibling', None))
-    }.get(psuedo_class)
+    }.get(psuedo_class, lambda el: False)
+
+
+def contains_all_classes_checker(required_classes, el):
+    if not el:
+        return False
+    actual_classes = el.get('class', [])
+    test_has_class = partial(operator_.contains, actual_classes)
+    return all(map(test_has_class, required_classes))
+
 
 def get_checker(functions):
     def checker(el):
@@ -98,7 +113,7 @@ def select(soup, selector):
         if handle_token:
             # Get the rightmost token
             handle_token = False
-            match = re.search('([_0-9a-zA-Z-#.:*"\'\[\\]=]+)$', selector)
+            match = SELECTOR_TOKEN_PATTERN.search(selector)
             if not match:
                 raise Exception("No match was found for {}. We're done or something is broken".format(selector))
             token = match.groups(1)[0]
@@ -110,17 +125,15 @@ def select(soup, selector):
             #
             # Get attribute selectors from token
             #
-            matches = attribute_regex.findall(token)
+            matches = ATTRIBUTE_PATTERN.findall(token)
             for match in matches:
                 checker_functions.append(get_attribute_checker(match[1], match[0], match[2]))
 
             #
             # Get pseudo classes from token
             #
-            for pseudo_class_regex in pseudo_classes_regexes:
-                match = pseudo_class_regex.search(token)
-                if match:
-                    checker_functions.append(get_pseudo_class_checker(match.groups(1)[0]))
+            for match in PSEUDO_CLASS_PATTERN.finditer(token):
+                checker_functions.append(get_pseudo_class_checker(match.groups(1)[0]))
 
             checker = get_checker(checker_functions)
             #
@@ -144,6 +157,7 @@ def select(soup, selector):
             # Get classes
             #
             classes = re.findall('\.([a-zA-Z0-9_-]+)', token)
+            checker_functions.append(partial(contains_all_classes_checker, classes))
 
             #
             # Search contexts for matches
@@ -153,11 +167,11 @@ def select(soup, selector):
             if ids:
                 find_dict['id'] = ids
             if classes:
-                find_dict['class'] = lambda attr: attr and set(classes).issubset(attr.split())
+                find_dict['class'] = partial(operator_.contains, classes)
             if operator is None:
                 # This is the first token: simply find all matches
                 for context in current_context:
-                    context_matches = [el for el in context[0].findAll(tag, find_dict) if checker(el)]
+                    context_matches = [el for el in context[0].find_all(tag, find_dict) if checker(el)]
                     for context_match in context_matches:
                         found.append(
                             (context_match, [context_match]),
@@ -210,14 +224,14 @@ def select(soup, selector):
         else:
             # Get the next operator (whitespace, >, ~, +)
             handle_token = True
-            operator = None
             match = re.search('([>~+]+)$', selector)
             if match:
                 operator = match.groups(1)[0]
+                selector = selector.rsplit(operator, 1)[0].rstrip()
             else:
                 operator = ' '
-            selector = selector.rsplit(operator, 1)[0].rstrip()
     return [entry[0] for entry in current_context]
+
 
 def monkeypatch(BeautifulSoupClass=None):
     """
@@ -225,10 +239,11 @@ def monkeypatch(BeautifulSoupClass=None):
     common import location for BeautifulSoup.
     """
     if not BeautifulSoupClass:
-        from BeautifulSoup import BeautifulSoup as BeautifulSoupClass
+        from bs4 import BeautifulSoup as BeautifulSoupClass
     BeautifulSoupClass.findSelect = select
+
 
 def unmonkeypatch(BeautifulSoupClass=None):
     if not BeautifulSoupClass:
-        from BeautifulSoup import BeautifulSoup as BeautifulSoupClass
+        from bs4 import BeautifulSoup as BeautifulSoupClass
     delattr(BeautifulSoupClass, 'findSelect')

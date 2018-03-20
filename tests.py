@@ -2,12 +2,16 @@
 # -*- coding: utf-8 -*-
 
 import unittest
-import pynliner
-import StringIO
 import logging
+from io import StringIO
+
 import cssutils
 import mock
+
+import pynliner
 from pynliner import Pynliner
+
+unicode = getattr(__builtins__, 'unicode', str)
 
 
 class Basic(unittest.TestCase):
@@ -37,7 +41,7 @@ class Basic(unittest.TestCase):
         self.p._get_styles()
         self.p._apply_styles()
         attr_dict = dict(self.p.soup.contents[0].attrs)
-        self.assertIn('style', attr_dict)
+        self.assertTrue('style' in attr_dict)
         self.assertEqual(attr_dict['style'], u'color: #fc0')
 
     def test_run(self):
@@ -120,12 +124,6 @@ class Basic(unittest.TestCase):
         output = Pynliner().from_string(html).with_cssString(css).run()
         self.assertEqual(output, expected)
 
-    def test_conditional_comments(self):
-        html = "<!-- <normal> --><!--[if condition]><p>special</p><![endif]-->"
-        expected = "<!-- &lt;normal&gt; --><!--[if condition]><p>special</p><![endif]-->"
-        output = Pynliner(allow_conditional_comments=True).from_string(html).run()
-        self.assertEqual(output, expected)
-
 
 class ExternalStyles(unittest.TestCase):
     def setUp(self):
@@ -191,30 +189,36 @@ class CommaSelector(unittest.TestCase):
         self.p._get_soup()
         self.p._get_styles()
         self.p._apply_styles()
-        self.assertEqual(unicode(self.p.soup), u'<span class="b1" style="font-weight: bold">Bold</span><span class="b2 c" style="color: red; font-weight: bold">Bold Red</span>')
+        self.assertEqual(unicode(self.p.soup), u'<span class="b1" style="font-weight: bold">Bold</span><span class="b2 c" style="font-weight: bold; color: red">Bold Red</span>')
 
     def test_run(self):
         """Test 'run' method"""
         output = self.p.run()
-        self.assertEqual(output, u'<span class="b1" style="font-weight: bold">Bold</span><span class="b2 c" style="color: red; font-weight: bold">Bold Red</span>')
+        self.assertEqual(output, u'<span class="b1" style="font-weight: bold">Bold</span><span class="b2 c" style="font-weight: bold; color: red">Bold Red</span>')
 
     def test_with_cssString(self):
         """Test 'with_cssString' method"""
         cssString = '.b1,.b2 {font-size: 2em;}'
         self.p = Pynliner().from_string(self.html).with_cssString(cssString)
         output = self.p.run()
-        self.assertEqual(output, u'<span class="b1" style="font-weight: bold; font-size: 2em">Bold</span><span class="b2 c" style="color: red; font-weight: bold; font-size: 2em">Bold Red</span>')
+        self.assertEqual(output, u'<span class="b1" style="font-weight: bold; font-size: 2em">Bold</span><span class="b2 c" style="font-weight: bold; color: red; font-size: 2em">Bold Red</span>')
 
     def test_fromString_complete(self):
         """Test 'fromString' complete"""
         output = pynliner.fromString(self.html)
-        desired = u'<span class="b1" style="font-weight: bold">Bold</span><span class="b2 c" style="color: red; font-weight: bold">Bold Red</span>'
+        desired = u'<span class="b1" style="font-weight: bold">Bold</span><span class="b2 c" style="font-weight: bold; color: red">Bold Red</span>'
         self.assertEqual(output, desired)
 
     def test_comma_whitespace(self):
         """Test excess whitespace in CSS"""
         html = '<style>h1,  h2   ,h3,\nh4{   color:    #000}  </style><h1>1</h1><h2>2</h2><h3>3</h3><h4>4</h4>'
         desired_output = '<h1 style="color: #000">1</h1><h2 style="color: #000">2</h2><h3 style="color: #000">3</h3><h4 style="color: #000">4</h4>'
+        output = Pynliner().from_string(html).run()
+        self.assertEqual(output, desired_output)
+
+    def test_comma_separated_nested_styles(self):
+        html = """<style>.orange-wrapper p, .super-orange-wrapper p { color:orange; }</style><div class="orange-wrapper"><p>Orange</p></div><div><p>Black</p></div>"""
+        desired_output = """<div class="orange-wrapper"><p style="color: orange">Orange</p></div><div><p>Black</p></div>"""
         output = Pynliner().from_string(html).run()
         self.assertEqual(output, desired_output)
 
@@ -235,6 +239,42 @@ class Extended(unittest.TestCase):
         self.assertEqual(output, desired_output)
 
 
+class MediaQuery(unittest.TestCase):
+    def setUp(self):
+        self.mq = '@media (min-width: 640px) { .infobox { float: right } }'
+
+    def test_leave_alone(self):
+        """Test media queries are 'left alone'"""
+        html = '<style>' + self.mq + '</style>'\
+               '<h1>Foo</h1><div class="infobox">Blah</div>'
+
+        desired_output = '<style>' + self.mq + '</style>'\
+            '<h1>Foo</h1><div class="infobox">Blah</div>'
+        output = Pynliner().from_string(html).run()
+        self.assertEqual(output, desired_output)
+
+    def test_mixed_styles(self):
+        """Test media queries do not affect regular operation"""
+        html = '<style>' + self.mq + ' h1 {color:#ffcc00;}</style>'\
+               '<h1>Foo</h1><div class="infobox">Blah</div>'
+
+        desired_output = '<style>' + self.mq + '</style>'\
+            '<h1 style="color: #fc0">Foo</h1><div class="infobox">Blah</div>'
+        output = Pynliner().from_string(html).run()
+        self.assertEqual(output, desired_output)
+
+    def test_real_html(self):
+        """Test re-inserted styles are placed in the body for HTML"""
+        html = '<html><head><style>' + self.mq + ' h1 {color:#ffcc00;}</style></head>'\
+               '<body><h1>Foo</h1><div class="infobox">Blah</div>'
+
+        desired_output = '<html><head></head><body><style>' + self.mq + '</style>'\
+            '<h1 style="color: #fc0">Foo</h1><div class="infobox">Blah</div>'\
+            '</body></html>'
+        output = Pynliner().from_string(html).run()
+        self.assertEqual(output, desired_output)
+
+
 class LogOptions(unittest.TestCase):
     def setUp(self):
         self.html = "<style>h1 { color:#ffcc00; }</style><h1>Hello World!</h1>"
@@ -248,7 +288,7 @@ class LogOptions(unittest.TestCase):
         self.log = logging.getLogger('testlog')
         self.log.setLevel(logging.DEBUG)
 
-        self.logstream = StringIO.StringIO()
+        self.logstream = StringIO()
         handler = logging.StreamHandler(self.logstream)
         log_format = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
         formatter = logging.Formatter(log_format)
@@ -259,7 +299,7 @@ class LogOptions(unittest.TestCase):
 
         self.p.run()
         log_contents = self.logstream.getvalue()
-        self.assertIn("DEBUG", log_contents)
+        self.assertTrue("DEBUG" in log_contents)
 
 
 class BeautifulSoupBugs(unittest.TestCase):
@@ -267,15 +307,51 @@ class BeautifulSoupBugs(unittest.TestCase):
         self.html = """<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
 "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">"""
         output = pynliner.fromString(self.html)
-        self.assertNotIn("<!<!", output)
+        self.assertTrue("<!<!" not in output)
 
     def test_double_comment(self):
         self.html = """<!-- comment -->"""
         output = pynliner.fromString(self.html)
-        self.assertNotIn("<!--<!--", output)
+        self.assertTrue("<!--<!--" not in output)
+
+
+class Entities(unittest.TestCase):
+
+    def test_html_entities_preserved_by_default(self):
+        html = u'<p>&nbsp;</p>'
+        output = pynliner.fromString(html)
+        expected = html
+        self.assertEqual(expected, output)
+
+    def test_html_entities_preserved_explicitly(self):
+        html = u'<p>&nbsp;</p>'
+        output = pynliner.fromString(html, preserve_entities=True)
+        expected = html
+        self.assertEqual(expected, output)
+
+    def test_html_entities_unpreserved_explicitly(self):
+        html = u'<p>&nbsp;</p>'
+        output = pynliner.fromString(html, preserve_entities=False)
+        expected = u'<p>\xa0</p>'
+        self.assertEqual(expected, output)
 
 
 class ComplexSelectors(unittest.TestCase):
+
+    def test_comma_specificity(self):
+        html = '<i>howdy</i>'
+        css = 'i, i { color: red; } i { color: blue; }'
+        expected = '<i style="color: blue">howdy</i>'
+        output = Pynliner().from_string(html).with_cssString(css).run()
+        self.assertEqual(output, expected)
+
+    def test_missing_link_descendant_selector(self):
+        html = '<div id="a"><i>x</i></div>'
+        css = '#a b i { color: red }'
+        expected = html
+        output = Pynliner().from_string(html).with_cssString(css).run()
+        self.assertEqual(output, expected)
+
     def test_multiple_class_selector(self):
         html = """<h1 class="a b">Hello World!</h1>"""
         css = """h1.a.b { color: red; }"""
@@ -283,10 +359,17 @@ class ComplexSelectors(unittest.TestCase):
         output = Pynliner().from_string(html).with_cssString(css).run()
         self.assertEqual(output, expected)
 
+    def test_conflicting_multiple_class_selector(self):
+        html = """<h1 class="a b">Hello World!</h1><h1 class="a">I should not be changed</h1>"""
+        css = """h1.a.b { color: red; }"""
+        expected = u'<h1 class="a b" style="color: red">Hello World!</h1><h1 class="a">I should not be changed</h1>'
+        output = Pynliner().from_string(html).with_cssString(css).run()
+        self.assertEqual(output, expected)
+
     def test_combination_selector(self):
         html = """<h1 id="a" class="b">Hello World!</h1>"""
         css = """h1#a.b { color: red; }"""
-        expected = u'<h1 id="a" class="b" style="color: red">Hello World!</h1>'
+        expected = u'<h1 class="b" id="a" style="color: red">Hello World!</h1>'
         output = Pynliner().from_string(html).with_cssString(css).run()
         self.assertEqual(output, expected)
 
@@ -476,19 +559,87 @@ class ComplexSelectors(unittest.TestCase):
         output = Pynliner().from_string(html).with_cssString(css).run()
         self.assertEqual(output, expected)
 
-    def test_attribute_selector_match(self):
-        html = """<h1 title="foo">Hello World!</h1>"""
-        css = """h1[title="foo"] { color: red; }"""
-        expected = u'<h1 title="foo" style="color: red">Hello World!</h1>'
-        output = Pynliner().from_string(html).with_cssString(css).run()
+    def test_specificity(self):
+        html = """<div class="foo"></div>"""
+        css1 = """div,a,b,c,d,e,f,g,h,i,j { color: red; }"""
+        css2 = """.foo { color: blue; }"""
+        expected = u"""<div class="foo" style="color: blue"></div>"""
+        output = pynliner.Pynliner().from_string(html).with_cssString(css1).with_cssString(css2).run()
         self.assertEqual(output, expected)
 
-    def test_attribute_selector_no_match(self):
-        html = """<h1 title="bar">Hello World!</h1>"""
-        css = """h1[title="foo"] { color: red; }"""
-        expected = u"""<h1 title="bar">Hello World!</h1>"""
-        output = Pynliner().from_string(html).with_cssString(css).run()
-        self.assertEqual(output, expected)
+
+class AttributeSelectorTestCase(unittest.TestCase):
+
+    def assert_pynlined(self, html, css, expected):
+        actual = pynliner.Pynliner().from_string(html).with_cssString(css).run()
+        self.assertEqual(actual, expected)
+
+    def test_exists(self):
+        html = '<span data-type="thing">1</span>'
+        css = '[data-type] {color: red;}'
+        expected = u'<span data-type="thing" style="color: red">1</span>'
+        self.assert_pynlined(html, css, expected)
+
+    def test_equals(self):
+        html = '<span data-type="thing">1</span>'
+        css = '[data-type="thing"] {color: red;}'
+        expected = u'<span data-type="thing" style="color: red">1</span>'
+        self.assert_pynlined(html, css, expected)
+        css = '[data-type = "thing"] {color: red;}'
+        self.assert_pynlined(html, css, expected)
+
+    def test_one_of(self):
+        html = '<span data-type="thing1 thing2">1</span>'
+        css = '[data-type~="thing1"] {color: red;}'
+        expected = u'<span data-type="thing1 thing2" style="color: red">1</span>'
+        self.assert_pynlined(html, css, expected)
+        css = '[data-type~="thing2"] {color: red;}'
+        expected = u'<span data-type="thing1 thing2" style="color: red">1</span>'
+        self.assert_pynlined(html, css, expected)
+
+    def test_starts_with(self):
+        html = '<span data-type="thing">1</span>'
+        css = '[data-type^="th"] {color: red;}'
+        expected = u'<span data-type="thing" style="color: red">1</span>'
+        self.assert_pynlined(html, css, expected)
+
+    def test_ends_with(self):
+        html = '<span data-type="thing">1</span>'
+        css = '[data-type$="ng"] {color: red;}'
+        expected = u'<span data-type="thing" style="color: red">1</span>'
+        self.assert_pynlined(html, css, expected)
+
+    def test_contains(self):
+        html = '<span data-type="thing">1</span>'
+        css = '[data-type*="i"] {color: red;}'
+        expected = u'<span data-type="thing" style="color: red">1</span>'
+        self.assert_pynlined(html, css, expected)
+
+    def test_is_or_prefixed_by(self):
+        html = '<span data-type="thing">1</span>'
+        css = '[data-type|="thing"] {color: red;}'
+        expected = u'<span data-type="thing" style="color: red">1</span>'
+        self.assert_pynlined(html, css, expected)
+        html = '<span data-type="thing-1">1</span>'
+        expected = u'<span data-type="thing-1" style="color: red">1</span>'
+        self.assert_pynlined(html, css, expected)
+
+
+class IdenticalElementStringTest(unittest.TestCase):
+    def test_identical_element(self):
+        css = """
+        .text-right {
+            text-align: right;
+        }
+        .box {
+            width:200px;
+            border: 1px solid #000;
+        }
+        """
+        html = """<div class="box"><p>Hello World</p><p class="text-right">Hello World on right</p><p class="text-right">Hello World on right</p></div>"""
+        expected = """<div class="box" style="width: 200px; border: 1px solid #000"><p>Hello World</p><p class="text-right" style="text-align: right">Hello World on right</p><p class="text-right" style="text-align: right">Hello World on right</p></div>"""
+        output = pynliner.Pynliner().from_string(html).with_cssString(css).run()
+        self.assertEqual(expected, output)
 
 
 if __name__ == '__main__':

@@ -16,12 +16,6 @@ installation
 
 ::
 
-    $ easy_install pynliner
-
-or
-
-::
-
     $ pip install pynliner
 
 example 
@@ -53,6 +47,36 @@ methods
 
 changelog
 =========
+
+0.8.0
+-----
+
+- fix multiclass selector bug ( https://github.com/rennat/pynliner/pull/52 )
+- fix python 3 compatability ( https://github.com/rennat/pynliner/pull/55 )
+
+0.7.2
+-----
+
+- fix duplicate element bug ( https://github.com/rennat/pynliner/issues/49 ) ( via https://github.com/rennat/pynliner/pull/51 )
+- preserve HTML entities through BeautifulSoup ( https://github.com/rennat/pynliner/issues/43 )
+
+0.7.1
+-----
+
+- attribute selector bug ( https://github.com/rennat/pynliner/issues/42 )
+
+0.7.0
+-----
+
+- adopted better versioning practices (hence the 2 minor versions in one evening)
+- fixed selector specificity sorting bug (via https://github.com/patricksurry/pynliner/commit/21cbadda157077f698a5f12891f6f021b584097f )
+- fixed descendant operator logic (problem found by rogerhu https://github.com/rogerhu/pynliner/commit/07fb71ed3edffb9bdbc867577bc60f1ab1e2efd9 )
+
+0.6.0
+-----
+
+- Python 3 support! (via agronholm https://github.com/rennat/pynliner/pull/41/commits/3ff3a7f3aae6e70d0a1e8919e27bf760f4ca79ae )
+- Now uses Beautiful Soup 4 (thanks to agronholm)
 
 0.5.0
 -----
