@@ -15,7 +15,7 @@ select(soup, 'div#main ul a')
 patched to support multiple class selectors here http://code.google.com/p/soupselect/issues/detail?id=4#c0
 """
 import re
-import BeautifulSoup
+import bs4
 
 attribute_regex = re.compile('\[(?P<attribute>\w+)(?P<operator>[=~\|\^\$\*]?)=?["\']?(?P<value>[^\]"]*)["\']?\]')
 pseudo_classes_regexes = (
@@ -41,12 +41,12 @@ def get_attribute_checker(operator, attribute, value=''):
         # attribute is either exactly value or starts with value-
         '|': lambda el: el.get(attribute, '') == value \
             or el.get(attribute, '').startswith('%s-' % value),
-    }.get(operator, lambda el: el.has_key(attribute))
+    }.get(operator, lambda el: el.has_attr(attribute))
 
 def is_white_space(el):
-    if isinstance(el, BeautifulSoup.NavigableString) and str(el).strip() == '':
+    if isinstance(el, bs4.NavigableString) and str(el).strip() == '':
         return True
-    if isinstance(el, BeautifulSoup.Comment):
+    if isinstance(el, bs4.Comment):
         return True
     return False
 
@@ -225,10 +225,10 @@ def monkeypatch(BeautifulSoupClass=None):
     common import location for BeautifulSoup.
     """
     if not BeautifulSoupClass:
-        from BeautifulSoup import BeautifulSoup as BeautifulSoupClass
+        from bs4 import BeautifulSoup as BeautifulSoupClass
     BeautifulSoupClass.findSelect = select
 
 def unmonkeypatch(BeautifulSoupClass=None):
     if not BeautifulSoupClass:
-        from BeautifulSoup import BeautifulSoup as BeautifulSoupClass
+        from bs4 import BeautifulSoup as BeautifulSoupClass
     delattr(BeautifulSoupClass, 'findSelect')

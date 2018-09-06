@@ -33,11 +33,14 @@ THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 __version__ = "0.5.0"
 
 import re
-import urlparse
-import urllib2
+
+from bs4 import BeautifulSoup
 import cssutils
-from BeautifulSoup import BeautifulSoup, Comment
-from soupselect import select
+import six
+from six.moves.urllib_parse import urljoin
+from six.moves.urllib_request import urlopen
+
+from .soupselect import select
 
 
 class Pynliner(object):
@@ -123,7 +126,7 @@ class Pynliner(object):
     def _get_url(self, url):
         """Returns the response content from the given url
         """
-        return urllib2.urlopen(url).read()
+        return urlopen(url).read()
 
     def _get_soup(self):
         """Convert source string to BeautifulSoup object. Sets it to self.soup.
@@ -136,7 +139,7 @@ class Pynliner(object):
         try:
             from mod_wsgi import version
             self.soup = BeautifulSoup(self.source_string, "html5lib")
-        except:
+        except ImportError:
             self.soup = BeautifulSoup(self.source_string)
 
     def _get_styles(self):
@@ -166,7 +169,7 @@ class Pynliner(object):
 
             # Convert the relative URL to an absolute URL ready to pass to urllib
             base_url = self.relative_url or self.root_url
-            url = urlparse.urljoin(base_url, url)
+            url = urljoin(base_url, url)
 
             self.style_string += self._get_url(url)
             tag.extract()
@@ -239,7 +242,7 @@ class Pynliner(object):
 
         # apply rules to elements
         for elem, style_declaration in elem_style_map.items():
-            if elem.has_key('style'):
+            if elem.has_attr('style'):
                 elem['style'] = u'%s; %s' % (style_declaration.cssText.replace('\n', ' '), elem['style'])
             else:
                 elem['style'] = style_declaration.cssText.replace('\n', ' ')
@@ -249,7 +252,7 @@ class Pynliner(object):
 
         Returns self.output
         """
-        self.output = unicode(self.soup)
+        self.output = six.text_type(self.soup)
         return self.output
     
     def _clean_output(self):

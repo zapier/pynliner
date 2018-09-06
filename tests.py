@@ -3,7 +3,7 @@
 
 import unittest
 import pynliner
-import StringIO
+import io
 import logging
 import cssutils
 import mock
@@ -118,12 +118,6 @@ class Basic(unittest.TestCase):
         css = """h1 { color: red; }"""
         expected = u"""<h1 style="color: red">Hello World!</h1><p>\u2022 point</p>"""
         output = Pynliner().from_string(html).with_cssString(css).run()
-        self.assertEqual(output, expected)
-
-    def test_conditional_comments(self):
-        html = "<!-- <normal> --><!--[if condition]><p>special</p><![endif]-->"
-        expected = "<!-- &lt;normal&gt; --><!--[if condition]><p>special</p><![endif]-->"
-        output = Pynliner(allow_conditional_comments=True).from_string(html).run()
         self.assertEqual(output, expected)
 
 
@@ -248,7 +242,7 @@ class LogOptions(unittest.TestCase):
         self.log = logging.getLogger('testlog')
         self.log.setLevel(logging.DEBUG)
 
-        self.logstream = StringIO.StringIO()
+        self.logstream = io.StringIO()
         handler = logging.StreamHandler(self.logstream)
         log_format = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
         formatter = logging.Formatter(log_format)
@@ -286,7 +280,7 @@ class ComplexSelectors(unittest.TestCase):
     def test_combination_selector(self):
         html = """<h1 id="a" class="b">Hello World!</h1>"""
         css = """h1#a.b { color: red; }"""
-        expected = u'<h1 id="a" class="b" style="color: red">Hello World!</h1>'
+        expected = u'<h1 class="b" id="a" style="color: red">Hello World!</h1>'
         output = Pynliner().from_string(html).with_cssString(css).run()
         self.assertEqual(output, expected)
 
@@ -479,7 +473,7 @@ class ComplexSelectors(unittest.TestCase):
     def test_attribute_selector_match(self):
         html = """<h1 title="foo">Hello World!</h1>"""
         css = """h1[title="foo"] { color: red; }"""
-        expected = u'<h1 title="foo" style="color: red">Hello World!</h1>'
+        expected = u'<h1 style="color: red" title="foo">Hello World!</h1>'
         output = Pynliner().from_string(html).with_cssString(css).run()
         self.assertEqual(output, expected)
 
